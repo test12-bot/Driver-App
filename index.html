@@ -17,9 +17,9 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Kufi+Arabic:wght@400;500;600;700;800;900&family=Baloo+2:wght@500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="leaflet.css?v=40">
-<link rel="stylesheet" href="styles.css?v=40">
+<link rel="stylesheet" href="styles.css?v=41">
 <link rel="stylesheet" href="map.css?v=40">
-<link rel="stylesheet" href="theme.css?v=40">
+<link rel="stylesheet" href="theme.css?v=42">
 </head>
 <body>
 
@@ -93,7 +93,10 @@
     <section class="screen active" id="screen-jobs"><div class="container">
       <div class="demo-banner" id="demoBanner" style="display:none;">نسخة تجريبية: الطلبات تُحفظ على هذا الجهاز فقط</div>
       <div class="online-card" id="onlineCard"></div>
-      <div class="act-map" id="actMap" style="display:none"><div class="lmap" id="actMapEl"></div></div>
+      <div class="home-map" id="actMap"><div class="lmap" id="actMapEl"></div>
+        <span class="map-lbl" id="mapLbl">جاري تحديد موقعك…</span>
+        <button type="button" class="map-me" onclick="recenter()" aria-label="موقعي"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="3.5"/><circle cx="12" cy="12" r="8"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button>
+      </div>
       <div id="activeBox"></div>
       <div id="offersBox"></div>
     </div></section>
@@ -109,7 +112,7 @@
         <h1 class="pf-name" id="pfName"></h1><p class="pf-handle" id="pfPhone" dir="ltr"></p><span class="pf-chip">كابتن HIGHWAY</span>
       </div></article>
       <div class="pf-list">
-        <button class="pf-row pf-link" type="button" onclick="toggleGps()"><span class="pf-k">مشاركة موقعي المباشر</span><span class="pf-v" id="pfGps">متوقفة</span></button>
+        <button class="pf-row pf-link" type="button" onclick="toggleGps()"><span class="pf-k">مشاركة موقعي مع المنسق</span><span class="pf-v" id="pfGps">تعمل وأنت متصل</span></button>
         <a class="pf-row pf-link" href="https://wa.me/962791819432" target="_blank" rel="noopener"><span class="pf-k">تواصل مع المنسق</span></a>
       </div>
       <button class="pf-logout" type="button" onclick="logout()">تسجيل الخروج</button>
@@ -129,6 +132,6 @@
 <script src="hw-food.js?v=40"></script>
 <script src="hw-orders.js?v=40"></script>
 <script src="hw-demo.js?v=40"></script>
-<script src="script.js?v=40"></script>
+<script src="script.js?v=41"></script>
 </body>
 </html>

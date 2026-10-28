@@ -171,6 +171,7 @@ function showScreen(id) {
     $('headerBack').classList.toggle('show', ROOTS.indexOf(id) < 0);
     document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.dataset.tab === TAB_OF[id]));
     window.scrollTo({ top: 0, behavior: 'auto' }); render();
+    if (id === 'screen-jobs' && homeMap) setTimeout(() => homeMap.invalidateSize(), 60);
 }
 function goTo(id) { if (stack[stack.length - 1] !== id) stack.push(id); showScreen(id); }
 function goBack() { if (stack.length > 1) { stack.pop(); showScreen(stack[stack.length - 1]); } }
@@ -192,7 +193,7 @@ async function submitLogin(ev) {
     if (!c) { $('loginPassField').classList.add('invalid'); err.textContent = 'الرقم أو الرمز غير صحيح'; return; }
     if (c.active === false) { err.textContent = 'حسابك موقوف، تواصل مع المنسق'; return; }
     try { localStorage.setItem(KEY, JSON.stringify({ id: c.id, name: c.name, phone: c.phone })); } catch (e) {}
-    applyUser({ id: c.id, name: c.name, phone: c.phone }); finishLogin(); render();
+    applyUser({ id: c.id, name: c.name, phone: c.phone }); finishLogin(); render(); setTimeout(() => { ensureMap(); startGps(false); renderMapLayers(true); homeMap && homeMap.invalidateSize(); }, 700);
 }
 function logout() { if (me) caps.patch(me.id, { online: false }); stopGps(); try { localStorage.removeItem(KEY); } catch (e) {} location.reload(); }
 
@@ -201,17 +202,25 @@ function myDoc() { return me ? caps.get(me.id) || {} : {}; }
 function isOnline() { return !!myDoc().online; }
 function setOnline(v) {
     caps.patch(me.id, { online: v, lastSeen: Date.now() }); buzz(15);
-    if (v) { try { HWOrders.beep(); } catch (e) {} startGps(false); } render();
+    if (v) { try { HWOrders.beep(); } catch (e) {} startGps(false); pushLoc(true); } render();
 }
-function toggleGps() { if (gpsWatch != null) stopGps(); else startGps(true); renderProfile(); }
+let shareLoc = true, myPos = null, myAcc = 0;
+try { shareLoc = localStorage.getItem('hwk-share') !== '0'; } catch (e) {}
+function toggleGps() { shareLoc = !shareLoc; try { localStorage.setItem('hwk-share', shareLoc ? '1' : '0'); } catch (e) {} if (shareLoc && myPos) pushLoc(true); renderProfile(); }
+/* تتبّع موقع الكابتن: يظهر دائمًا على خريطته، ويُرسل للمنسق فقط وهو متصل */
 function startGps(manual) {
     if (!navigator.geolocation || gpsWatch != null) return;
     gpsWatch = navigator.geolocation.watchPosition(p => {
-        if (Date.now() - lastGps < 15000) return; lastGps = Date.now();
-        const pos = { lat: p.coords.latitude, lng: p.coords.longitude, lastSeen: Date.now() }; updateMeMarker([pos.lat, pos.lng]);
-        caps.patch(me.id, pos);
-        const a = active(); if (a) HWOrders.update(a.id, { captain: Object.assign({}, a.captain, { lat: pos.lat, lng: pos.lng }) });
-    }, () => { gpsWatch = null; if (manual) HWOrders.toast('تعذر الوصول إلى موقعك'); }, { enableHighAccuracy: true, maximumAge: 10000 });
+        myPos = [p.coords.latitude, p.coords.longitude]; myAcc = p.coords.accuracy || 0;
+        updateMeMarker(myPos, myAcc); pushLoc(false);
+    }, (e) => { if (e && e.code === 1) { gpsWatch = null; HWOrders.toast('فعّل إذن الموقع ليظهر موقعك على الخريطة'); } else if (manual) HWOrders.toast('تعذر الوصول إلى موقعك'); },
+    { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 });
+}
+function pushLoc(force) {
+    if (!me || !myPos || !shareLoc || !isOnline()) return;
+    if (!force && Date.now() - lastGps < 15000) return; lastGps = Date.now();
+    caps.patch(me.id, { lat: myPos[0], lng: myPos[1], lastSeen: Date.now() });
+    const a = active(); if (a) HWOrders.update(a.id, { captain: Object.assign({}, a.captain, { lat: myPos[0], lng: myPos[1] }) });
 }
 function stopGps() { if (gpsWatch != null) { navigator.geolocation.clearWatch(gpsWatch); gpsWatch = null; } }
 setInterval(() => { if (me && isOnline()) caps.patch(me.id, { lastSeen: Date.now() }); }, 30000);
@@ -293,28 +302,45 @@ function sheet(h) { $('sheetBody').innerHTML = h; $('sheet').classList.add('show
 function closeSheet() { $('sheet').classList.remove('show'); }
 function openJob(id) { jobId = id; goTo('screen-job'); }
 
-function renderActMap(a) {
-    const box = $('actMap');
-    if (!a || !a.address || a.address.lat == null || !window.HWMap) { box.style.display = 'none'; return; }
-    box.style.display = '';
-    const sl = a.storeLoc ? [a.storeLoc.lat, a.storeLoc.lng] : HWMap.center(), dl = [a.address.lat, a.address.lng];
-    if (!actMap || actMap.id !== a.id) {
-        if (actMap) { try { actMap.map.remove(); } catch (e) {} }
-        const map = HWMap.create($('actMapEl'), { center: sl, zoom: 14 });
-        HWMap.line(map, a.route || [sl, dl]);
-        L.marker(sl, { icon: HWMap.ICON.store(a.storeId || ''), interactive: false }).addTo(map);
-        L.marker(dl, { icon: HWMap.ICON.home(), interactive: false }).addTo(map);
-        actMap = { id: a.id, map, me: null, pts: (a.route || [sl, dl]).concat([sl, dl]) };
-        setTimeout(() => { map.invalidateSize(); HWMap.fit(map, actMap.pts, [40, 40]); }, 80);
-    }
+/* خريطة الصفحة الرئيسية: موقعي بالضبط + الطلب الحالي أو العروض القريبة */
+let homeMap = null, meMk = null, accMk = null, ordLayer = null, mapSig = '', followMe = true;
+function ensureMap() {
+    if (homeMap || !window.HWMap) return;
+    const d = myDoc(), start = myPos || (d.lat != null ? [d.lat, d.lng] : HWMap.center());
+    homeMap = HWMap.create($('actMapEl'), { center: start, zoom: 15 });
+    ordLayer = L.layerGroup().addTo(homeMap);
+    homeMap.on('dragstart', () => { followMe = false; });
 }
-function updateMeMarker(pos) { if (!actMap) return; if (!actMap.me) actMap.me = L.marker(pos, { icon: HWMap.ICON.me(), interactive: false }).addTo(actMap.map); else actMap.me.setLatLng(pos); }
+function updateMeMarker(pos, acc) {
+    if (!homeMap) return;
+    if (!meMk) { meMk = L.marker(pos, { icon: HWMap.ICON.me(), interactive: false, zIndexOffset: 800 }).addTo(homeMap); accMk = L.circle(pos, { radius: acc || 0, color: '#25CED1', weight: 1, opacity: .5, fillColor: '#25CED1', fillOpacity: .12, interactive: false }).addTo(homeMap); }
+    else { meMk.setLatLng(pos); accMk.setLatLng(pos); accMk.setRadius(acc || 0); }
+    if (followMe && !mapSig) homeMap.setView(pos, Math.max(homeMap.getZoom(), 15), { animate: true });
+}
+function recenter() { if (!homeMap) return; followMe = true; mapSig = ''; renderMapLayers(true); if (myPos) homeMap.setView(myPos, 16, { animate: true }); else startGps(true); buzz(); }
+function renderMapLayers(force) {
+    ensureMap(); if (!homeMap) return;
+    const a = active(), of = a ? [] : offers();
+    const sig = a ? 'a' + a.id + a.status : of.map(o => o.id).join(',');
+    if (!force && sig === mapSig) return; mapSig = sig; ordLayer.clearLayers();
+    const pts = myPos ? [myPos] : [];
+    if (a && a.address && a.address.lat != null) {
+        const sl = a.storeLoc ? [a.storeLoc.lat, a.storeLoc.lng] : HWMap.center(), dl = [a.address.lat, a.address.lng];
+        ordLayer.addLayer(HWMap.line(homeMap, a.route || [sl, dl]));
+        L.marker(sl, { icon: HWMap.ICON.store(a.storeId || ''), interactive: false }).addTo(ordLayer);
+        L.marker(dl, { icon: HWMap.ICON.home(), interactive: false }).addTo(ordLayer);
+        pts.push(sl, dl);
+    } else of.forEach(o => { if (o.storeLoc) { const p = [o.storeLoc.lat, o.storeLoc.lng]; L.marker(p, { icon: HWMap.ICON.store(o.storeId || ''), interactive: false }).addTo(ordLayer); pts.push(p); } });
+    if (sig && pts.length > 1) { followMe = false; HWMap.fit(homeMap, pts, [44, 44]); }
+    else if (myPos) homeMap.setView(myPos, 15, { animate: false });
+    const lbl = $('mapLbl'); if (lbl) lbl.textContent = a ? (a.status === 'picked' ? 'الطريق إلى العميل' : 'الطريق إلى المتجر') : of.length ? of.length + ' طلب بالقرب منك' : (myPos ? 'موقعك الآن' : 'جاري تحديد موقعك…');
+}
 function renderJobs() {
     const on = isOnline();
     $('onlineCard').className = 'online-card' + (on ? ' on' : '');
     $('onlineCard').innerHTML = '<div class="oc-t"><b>' + (on ? 'أنت متصل' : 'أنت غير متصل') + '</b><small>' + (on ? 'تصلك الطلبات الجديدة مباشرة' : 'اتصل لتستقبل الطلبات') + '</small></div><button type="button" class="sw' + (on ? ' on' : '') + '" onclick="setOnline(' + (!on) + ')" aria-label="تبديل الاتصال"></button>';
     $('netDot').classList.toggle('on', on);
-    const a = active(); renderActMap(a); $('activeBox').innerHTML = a ? '<h3 class="sec-t">طلبك الحالي</h3>' + activeCard(a) : '';
+    const a = active(); renderMapLayers(false); $('activeBox').innerHTML = a ? '<h3 class="sec-t">طلبك الحالي</h3>' + activeCard(a) : '';
     const of = on && !a ? offers() : [];
     $('offersBox').innerHTML = !on ? '<div class="empty-orders">اتصل لتبدأ باستقبال الطلبات</div>' : a ? '' : of.length ? '<h3 class="sec-t">طلبات متاحة (' + of.length + ')</h3>' + of.map(offerCard).join('') : '<div class="empty-orders">لا توجد طلبات الآن، نبحث لك…</div>';
     const b = $('tabBadge'); b.textContent = of.length + (a ? 1 : 0); b.classList.toggle('on', of.length + (a ? 1 : 0) > 0);
@@ -347,7 +373,7 @@ function renderEarn() {
         '<div class="eg warn" style="grid-column:1/-1"><small>المستحق للشركة (عمولة ' + Math.round((CFG.commissionRate || .1) * 100) + '٪ من التوصيل)</small><b>' + money2(t.com) + '</b></div></div>' +
         '<h3 class="sec-t">الطلبات</h3><div class="cart-card">' + (list.length ? list.slice().sort((a, b) => b.updatedAt - a.updatedAt).map(o => '<div class="er"><div><b>' + H(o.storeName || o.from || '') + '</b><small>' + H(o.code) + ' · ' + HWOrders.ago(o.updatedAt || o.createdAt) + '</small></div><b>+' + money(earnOf(o)) + '</b></div>').join('') : '<p class="mut">لا توجد طلبات في هذه الفترة</p>') + '</div>';
 }
-function renderProfile() { $('pfGps').textContent = gpsWatch != null ? 'تعمل' : 'متوقفة'; }
+function renderProfile() { $('pfGps').textContent = shareLoc ? 'تعمل وأنت متصل' : 'متوقفة'; }
 function render() {
     if (!me) return;
     if (cur === 'screen-jobs') renderJobs(); else if (cur === 'screen-job') renderJob(); else if (cur === 'screen-earn') renderEarn(); else renderProfile();
@@ -380,7 +406,7 @@ document.addEventListener('DOMContentLoaded', () => {
     HWDemo.seed();
     const saved = readJSON(KEY, null);
     applyUser(saved && saved.id ? saved : null);
-    if (saved && saved.id) setTimeout(() => { if (isOnline()) startGps(false); }, 1500);
+    if (saved && saved.id) setTimeout(() => { ensureMap(); startGps(false); renderMapLayers(true); }, 600);
     const splash = $('splash'); let skip = false;
     try { skip = sessionStorage.getItem('hw-skip-splash') === '1'; sessionStorage.removeItem('hw-skip-splash'); } catch (e) {}
     if (!saved) skip = false;
