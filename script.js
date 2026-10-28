@@ -1,16 +1,15 @@
-/* ---------- أيقونات الشاشة الافتتاحية (طعام) ---------- */
-const FOOD_ICONS = [
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11c0-3.5 3.6-6 8-6s8 2.5 8 6H4Z"/><path d="M3 14.5h18"/><path d="M5 17.5h14v.5a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-.5Z"/></svg>',
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3C8 3 4.5 4.5 2.5 7L12 21 21.5 7C19.5 4.5 16 3 12 3Z"/><circle cx="10" cy="9" r="1.2"/><circle cx="14" cy="11" r="1.2"/><circle cx="12" cy="15" r="1"/></svg>',
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8h12v6a5 5 0 0 1-5 5h-2a5 5 0 0 1-5-5V8Z"/><path d="M17 10h1.5a2.5 2.5 0 0 1 0 5H17"/><path d="M8 3v2M11 3v2M14 3v2"/></svg>',
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v7a2 2 0 0 0 2 2v9"/><path d="M10 3v7a2 2 0 0 1-2 2"/><path d="M17 3c-2 1.5-3 4-3 7h3v11"/></svg>',
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11a5 5 0 0 1 10 0"/><path d="M6.5 11h11L12 21 6.5 11Z"/></svg>',
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8h14l-1 12H6L5 8Z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg>'
-];
+/* =========================================================
+   HIGHWAY Driver App — script.js
+   ملف مُجمَّع من جزأين: (1) الشاشة الافتتاحية وتسجيل الدخول المشتركة
+   (2) منطق تطبيق الكابتن: الاتصال، الخريطة والموقع، العروض، مراحل التوصيل، الأرباح.
+   يعتمد على: hw-config.js, hw-orders.js, hw-map.js, hw-food.js, hw-demo.js
+   ========================================================= */
+/* ---------- الشاشة الافتتاحية: رسومات الطعام العائمة ---------- */
+
 
 function buildSplashIcons() {
     const wrap = document.getElementById('splashIcons');
-    const SPL = window.HWFood ? HWFood.splashSet() : FOOD_ICONS;
+    const SPL = HWFood.splashSet();   // رسومات الطعام المشتركة (hw-food.js)
     for (let i = 0; i < 18; i++) {
         const el = document.createElement('div');
         el.className = 'float-icon';
@@ -191,7 +190,7 @@ async function submitLogin(ev) {
     await new Promise(r => setTimeout(r, 300)); btn.classList.remove('loading');
     const c = caps.list().filter(x => x.phone === phone && x.pin === hash)[0];
     if (!c) { $('loginPassField').classList.add('invalid'); err.textContent = 'الرقم أو الرمز غير صحيح'; return; }
-    if (c.active === false) { err.textContent = 'حسابك موقوف، تواصل مع المنسق'; return; }
+    if (c.active === false) { err.textContent = 'حسابك موقوف، تواصل مع الدعم'; return; }
     try { localStorage.setItem(KEY, JSON.stringify({ id: c.id, name: c.name, phone: c.phone })); } catch (e) {}
     applyUser({ id: c.id, name: c.name, phone: c.phone }); finishLogin(); render(); setTimeout(() => { ensureMap(); startGps(false); renderMapLayers(true); homeMap && homeMap.invalidateSize(); }, 700);
 }
@@ -220,7 +219,6 @@ function pushLoc(force) {
     if (!me || !myPos || !shareLoc || !isOnline()) return;
     if (!force && Date.now() - lastGps < 15000) return; lastGps = Date.now();
     caps.patch(me.id, { lat: myPos[0], lng: myPos[1], lastSeen: Date.now() });
-    const a = active(); if (a) HWOrders.update(a.id, { captain: Object.assign({}, a.captain, { lat: myPos[0], lng: myPos[1] }) });
 }
 function stopGps() { if (gpsWatch != null) { navigator.geolocation.clearWatch(gpsWatch); gpsWatch = null; } }
 setInterval(() => { if (me && isOnline()) caps.patch(me.id, { lastSeen: Date.now() }); }, 30000);
@@ -234,9 +232,36 @@ function offers() {
     return orders.filter(o => HWOrders.offerable(o) && dec.indexOf(o.id) < 0).filter(o => {
         if (o.offerTo === me.id) return now - (o.offerAt || 0) < lim;          /* عرض موجّه لي من الإسناد التلقائي */
         if (o.offerTo || !autoMode) return false;                              /* موجّه لغيري، أو الوضع يدوي */
-        return now - (o.createdAt || 0) > 150000 && (o.offered || []).indexOf(me.id) < 0;   /* احتياط: لم يتصرف المنسق فيعرض للجميع */
+        return now - (o.createdAt || 0) > 90000 && (o.offered || []).indexOf(me.id) < 0;   /* احتياط: لم يتصرف المنسق فيعرض للجميع */
     });
 }
+/* الإسناد التلقائي من جهة الكابتن أيضًا: إن لم تكن لوحة المنسقين مفتوحة، يحسب كل تطبيق
+   ترتيب الكباتن المتاحين بنفس قاعدة اللوحة (الأقرب للمتجر ثم الأقدم انتظارًا)، ويأخذ العرض إن كان هو الأول */
+function capLive(c) { return c.active !== false && c.online && (!c.lastSeen || Date.now() - c.lastSeen < 120000); }
+function selfDispatch() {
+    if (!me || !autoMode || !isOnline() || active()) return;
+    const now = Date.now(), lim = (CFG.offerSeconds || 45) * 1000, all = caps.list();
+    const busy = {}, pend = {};
+    orders.forEach(o => {
+        if (o.captain && o.captain.id && (o.status === 'accepted' || o.status === 'picked')) busy[o.captain.id] = 1;
+        if (o.offerTo && HWOrders.offerable(o) && now - (o.offerAt || 0) < lim + 2000) pend[o.offerTo] = o.id;
+    });
+    if (pend[me.id]) return;
+    const dist = (c, o) => c.lat != null && o.storeLoc ? HWMap.est([c.lat, c.lng], [o.storeLoc.lat, o.storeLoc.lng]) : null;
+    orders.filter(o => HWOrders.offerable(o)).sort((a, b) => a.createdAt - b.createdAt).some(o => {
+        if (o.offerTo && now - (o.offerAt || 0) < lim + 2000) return false;
+        const offered = (o.offered || []).slice(); if (o.offerTo && offered.indexOf(o.offerTo) < 0) offered.push(o.offerTo);
+        const cands = all.filter(c => capLive(c) && !busy[c.id] && !pend[c.id] && offered.indexOf(c.id) < 0).sort((a, b) => {
+            const da = dist(a, o), db = dist(b, o);
+            if (da != null && db != null) return da - db; if (da != null) return -1; if (db != null) return 1; return (a.lastSeen || 0) - (b.lastSeen || 0);
+        });
+        if (!cands.length || cands[0].id !== me.id) return false;
+        const d = dist(cands[0], o);
+        HWOrders.update(o.id, { offerTo: me.id, offerAt: now, offered: offered.concat([me.id]), offerName: me.name, offerKm: d == null ? null : Math.round(d * 10) / 10 }, 'offer_sent');
+        return true;
+    });
+}
+setInterval(() => { try { selfDispatch(); } catch (e) {} }, 4000);
 function saveSeen() { try { localStorage.setItem(SEEN_KEY, JSON.stringify(seen)); } catch (e) {} }
 async function takeOffer(id) {
     if (active()) { HWOrders.toast('أنهِ طلبك الحالي أولًا'); return; }
@@ -253,8 +278,8 @@ function offerCard(o) {
     const mk = HWOrders.isMarket(o);
     return '<div class="offer" data-id="' + H(o.id) + '"><div class="of-top"><b>' + H(o.storeName || o.from || 'طلب') + '</b><span class="of-earn">+' + money(s.net) + ' د.أ</span></div>' +
         '<div class="of-route">من <b>' + H(o.from || o.storeName || '') + '</b><br>إلى <b>' + H((o.address && (o.address.label || o.address.area)) || o.to || '') + '</b></div>' +
-        '<div class="of-meta">' + (mk ? '<span>ادفع للمتجر ' + money(s.items) + ' د.أ</span><span>تحصّل ' + money(s.collected) + ' د.أ</span>' : '<span>توصيل</span>') + '<span>أجرة التوصيل ' + money(s.fee) + '</span>' + (o.distKm ? '<span>' + o.distKm + ' كم</span>' : '') + '<span>' + left + ' ث</span></div>' +
-        '<div class="of-act"><button type="button" class="submit-btn" data-take="' + H(o.id) + '"><span class="btn-label">قبول الطلب</span></button><button type="button" class="ghost-btn" data-dec="' + H(o.id) + '">تجاهل</button></div>' +
+        '<div class="of-meta">' + (mk ? '<span>ادفع للمتجر ' + money(s.items) + ' د.أ</span><span>تحصّل ' + money(s.collected) + ' د.أ</span>' : '<span>توصيل</span>') + '<span>رسوم التوصيل ' + money(s.fee) + '</span>' + (o.distKm ? '<span>' + o.distKm + ' كم</span>' : '') + '<span>' + left + ' ث</span></div>' +
+        '<div class="of-act"><button type="button" class="submit-btn" data-take="' + H(o.id) + '"><span class="btn-label">قبول الطلب</span></button><button type="button" class="ghost-btn" data-dec="' + H(o.id) + '">رفض</button></div>' +
         '<div class="of-bar"><i style="width:' + pct + '%"></i></div></div>';
 }
 
@@ -278,7 +303,7 @@ function activeCard(o) {
     return '<div class="act-card"><small>' + H(o.code) + ' · ' + (toStore ? 'في الطريق للمتجر' : 'في الطريق للعميل') + '</small>' +
         '<h2>' + (toStore ? H(o.storeName || o.from || '') : H((o.customer && o.customer.name) || o.to || 'العميل')) + '</h2>' +
         '<div class="act-info">' +
-        (toStore ? (mk ? '<div><span>تدفع للمتجر كاش</span><b>' + money2(s.items) + '</b></div><div><span>حالة المتجر</span><b>' + (o.storeState === 'ready' ? 'جاهز ✓' : 'قيد التحضير') + '</b></div>' : '<div><span>من</span><b>' + H(o.from || '') + '</b></div>')
+        (toStore ? (mk ? '<div><span>تدفعه للمتجر نقدًا</span><b>' + money2(s.items) + '</b></div><div><span>حالة المتجر</span><b>' + (o.storeState === 'ready' ? 'جاهز ✓' : 'قيد التحضير') + '</b></div>' : '<div><span>من</span><b>' + H(o.from || '') + '</b></div>')
             : '<div><span>العنوان</span><b>' + H(((o.address && (o.address.label || o.address.area)) || o.to || '') + (o.address && o.address.details ? ' · ' + o.address.details : '')) + '</b></div>' + (mk ? '<div><span>تحصّل من العميل</span><b>' + money2(s.collected) + '</b></div>' : '')) + '</div>' +
         '<div class="act-btns"><a href="' + HWOrders.openNav(navTarget(o)) + '" target="_blank" rel="noopener">🧭 افتح الخريطة</a>' + (phone ? '<a href="tel:' + H(phone) + '">📞 اتصال</a>' : '') + '<button type="button" onclick="openJob(\'' + o.id + '\')">التفاصيل</button></div>' +
         (st ? '<button type="button" class="submit-btn" style="margin-top:12px" data-step="' + st.k + '" data-id="' + o.id + '"><span class="btn-label">' + st.t + '</span></button>' : '') + '</div>';
@@ -289,7 +314,7 @@ function stepAction(k, id) {
     if (k === 'arrS') HWOrders.update(id, { arrivedStore: true }, 'arrived_store');
     else if (k === 'arrC') HWOrders.update(id, { arrivedCustomer: true }, 'arrived_customer');
     else if (k === 'pick') {
-        if (HWOrders.isMarket(o)) sheet('<div class="sh-head"><div><small>' + H(o.code) + '</small><h3>ادفع للمتجر</h3></div></div><div class="pay-big"><div class="big">' + money(s.items) + ' د.أ</div><p class="mut">ادفع هذا المبلغ كاش لـ ' + H(o.storeName) + ' واستلم الطلب' + (o.storeState !== 'ready' ? '<br><b style="color:var(--danger)">تنبيه: المتجر لم يؤكد أن الطلب جاهز</b>' : '') + '</p></div><button type="button" class="submit-btn" onclick="confirmPick(\'' + id + '\')"><span class="btn-label">دفعت واستلمت</span></button>');
+        if (HWOrders.isMarket(o)) sheet('<div class="sh-head"><div><small>' + H(o.code) + '</small><h3>ادفع للمتجر</h3></div></div><div class="pay-big"><div class="big">' + money(s.items) + ' د.أ</div><p class="mut">ادفع هذا المبلغ نقدًا لـ ' + H(o.storeName) + ' واستلم الطلب' + (o.storeState !== 'ready' ? '<br><b style="color:var(--danger)">تنبيه: المتجر لم يؤكد أن الطلب جاهز</b>' : '') + '</p></div><button type="button" class="submit-btn" onclick="confirmPick(\'' + id + '\')"><span class="btn-label">دفعت واستلمت</span></button>');
         else confirmPick(id);
     } else if (k === 'done') {
         if (HWOrders.isMarket(o)) sheet('<div class="sh-head"><div><small>' + H(o.code) + '</small><h3>حصّل من العميل</h3></div></div><div class="pay-big"><div class="big">' + money(s.collected) + ' د.أ</div><p class="mut">المنتجات ' + money(s.items) + ' + التوصيل ' + money(s.fee) + '</p></div><button type="button" class="submit-btn" onclick="confirmDone(\'' + id + '\')"><span class="btn-label">استلمت المبلغ وسلّمت الطلب</span></button>');
@@ -352,7 +377,7 @@ function renderJob() {
     $('jobBody').innerHTML = '<div class="page-heading"><h1>' + H(o.code) + '</h1><p>' + H(o.storeName || o.from || '') + ' · ' + HWOrders.label(o) + '</p></div>' +
         (o.status === 'accepted' || o.status === 'picked' ? activeCard(o) : '') +
         (mk ? '<h3 class="sec-t">المنتجات</h3><div class="cart-card">' + o.items.map(l => '<div class="cl ro"><div class="cl-txt"><b>' + l.qty + '× ' + H(l.name) + '</b>' + (l.notes ? '<small>' + H(l.notes) + '</small>' : '') + '</div></div>').join('') + (o.notes ? '<p class="mut">ملاحظة: ' + H(o.notes) + '</p>' : '') + '</div>' : '') +
-        '<h3 class="sec-t">الحساب</h3><div class="cart-card sum">' + (mk ? '<div><span>تدفع للمتجر</span><b>' + money2(s.items) + '</b></div><div><span>تحصّل من العميل</span><b>' + money2(s.collected) + '</b></div>' : '') + '<div><span>أجرة التوصيل</span><b>' + money2(s.fee) + '</b></div><div><span>عمولة الشركة (' + Math.round((CFG.commissionRate || .1) * 100) + '٪)</span><b>−' + money2(s.commission) + '</b></div><div class="tot"><span>صافي ربحك</span><b>' + money2(s.net) + '</b></div></div>' +
+        '<h3 class="sec-t">الحساب</h3><div class="cart-card sum">' + (mk ? '<div><span>تدفع للمتجر</span><b>' + money2(s.items) + '</b></div><div><span>تحصّل من العميل</span><b>' + money2(s.collected) + '</b></div>' : '') + '<div><span>رسوم التوصيل</span><b>' + money2(s.fee) + '</b></div><div><span>عمولة المنصة (' + Math.round((CFG.commissionRate || .1) * 100) + '٪)</span><b>−' + money2(s.commission) + '</b></div><div class="tot"><span>صافي أرباحك</span><b>' + money2(s.net) + '</b></div></div>' +
         '<h3 class="sec-t">السجل</h3><div class="cart-card">' + HWOrders.timeline(o) + '</div>';
 }
 
@@ -368,9 +393,9 @@ function renderEarn() {
     const list = mineOrders().filter(o => o.status === 'delivered' && inRange(o.updatedAt || o.createdAt));
     const t = list.reduce((a, o) => { const s = HWOrders.settle(o); a.n++; a.col += s.collected; a.items += s.items; a.fee += s.fee; a.com += s.commission; a.net += s.net; return a; }, { n: 0, col: 0, items: 0, fee: 0, com: 0, net: 0 });
     $('earnBody').innerHTML = '<div class="eg-grid"><div class="eg hi"><small>صافي أرباحك</small><b>' + money2(t.net) + '</b></div>' +
-        '<div class="eg"><small>طلبات مسلّمة</small><b>' + t.n + '</b></div><div class="eg"><small>أجور التوصيل</small><b>' + money2(t.fee) + '</b></div>' +
+        '<div class="eg"><small>طلبات مسلّمة</small><b>' + t.n + '</b></div><div class="eg"><small>رسوم التوصيل</small><b>' + money2(t.fee) + '</b></div>' +
         '<div class="eg"><small>حصّلت من العملاء</small><b>' + money2(t.col) + '</b></div><div class="eg"><small>دفعت للمطاعم</small><b>' + money2(t.items) + '</b></div>' +
-        '<div class="eg warn" style="grid-column:1/-1"><small>المستحق للشركة (عمولة ' + Math.round((CFG.commissionRate || .1) * 100) + '٪ من التوصيل)</small><b>' + money2(t.com) + '</b></div></div>' +
+        '<div class="eg warn" style="grid-column:1/-1"><small>المستحق للمنصة (عمولة ' + Math.round((CFG.commissionRate || .1) * 100) + '٪ من التوصيل)</small><b>' + money2(t.com) + '</b></div></div>' +
         '<h3 class="sec-t">الطلبات</h3><div class="cart-card">' + (list.length ? list.slice().sort((a, b) => b.updatedAt - a.updatedAt).map(o => '<div class="er"><div><b>' + H(o.storeName || o.from || '') + '</b><small>' + H(o.code) + ' · ' + HWOrders.ago(o.updatedAt || o.createdAt) + '</small></div><b>+' + money(earnOf(o)) + '</b></div>').join('') : '<p class="mut">لا توجد طلبات في هذه الفترة</p>') + '</div>';
 }
 function renderProfile() { $('pfGps').textContent = shareLoc ? 'تعمل وأنت متصل' : 'متوقفة'; }

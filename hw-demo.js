@@ -22,6 +22,12 @@
         menus.create({ id: sid, demo: true, cats: MENUS[sid].map(function (c, i) { return { id: 'c' + i, name: c[0], items: c[1] }; }) });
       });
     }
+    var offers = g.HWDB.col('offers'); offers.subscribe(function () {})();
+    if (!offers.list().length && !localStorage.getItem('hw-demo-offers')) {
+      offers.create({ id: 'of-nafeeseh', storeId: 'nafeeseh', title: 'خصم 15% على الحلويات', sub: 'للطلبات فوق 5 د.أ', percent: 15, minOrder: 5, active: true, demo: true });
+      offers.create({ id: 'of-bullgurz', storeId: 'bullgurz', title: 'خصم 10% على البرغر', sub: 'للطلبات فوق 8 د.أ', percent: 10, minOrder: 8, active: true, demo: true });
+      try { localStorage.setItem('hw-demo-offers', '1'); } catch (e) {}
+    }
     caps.subscribe(function () {})();
     if (!caps.list().length) {
       [['k1', 'كابتن تجريبي ١', '0790000001'], ['k2', 'كابتن تجريبي ٢', '0790000002']].forEach(function (c) {
