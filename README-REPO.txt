@@ -1,3 +1,3 @@
 هذا المجلد كاملًا يخص مستودع: Captain-App
 ارفع كل محتوياته إلى جذر المستودع واستبدل الملفات القديمة.
-ملفات جديدة: hw-biz.js و hw-i18n.js و dark.css
+ملفات جديدة: hw-biz.js و hw-i18n.js و dark.css و hw-push.js و sw.js

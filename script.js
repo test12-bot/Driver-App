@@ -244,7 +244,8 @@ function offers() {
 }
 /* الإسناد التلقائي من جهة الكابتن أيضًا: إن لم تكن لوحة المنسقين مفتوحة، يحسب كل تطبيق
    ترتيب الكباتن المتاحين بنفس قاعدة اللوحة (الأقرب للمتجر ثم الأقدم انتظارًا)، ويأخذ العرض إن كان هو الأول */
-function capLive(c) { return c.active !== false && c.online && (!c.lastSeen || Date.now() - c.lastSeen < 120000); }
+/* متاح: متصل وظاهر حديثًا، أو مفعّل الإشعارات (تصله العروض والتطبيق مغلق) خلال 12 ساعة */
+function capLive(c) { const age = Date.now() - (c.lastSeen || 0); return c.active !== false && c.online && (!c.lastSeen || age < 120000 || (c.pushOn && age < 12 * 3600e3)); }
 function selfDispatch() {
     if (!me || !autoMode || !isOnline() || active()) return;
     const now = Date.now(), lim = (CFG.offerSeconds || 45) * 1000, all = caps.list();
@@ -545,6 +546,7 @@ document.addEventListener('DOMContentLoaded', () => {
     HWBiz.targets.subscribe(() => { if (me) render(); }); HWBiz.announcementsCol.subscribe(() => { if (me) render(); });
     settingsCol.subscribe(l => { const d = l.filter(x => x.id === 'dispatch')[0]; autoMode = !d || d.auto !== false; if (me) render(); });
     HWOrders.subscribe(onOrders);
+    HWPush.init('captain', () => me && me.id, { open: () => { if (me) tabGo('screen-jobs'); } });
     showScreen('screen-jobs');
     setInterval(() => {
         if (document.hidden || !me || cur !== 'screen-jobs') return;
