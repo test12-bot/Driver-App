@@ -190,6 +190,7 @@ async function submitLogin(ev) {
     if (!phone) { $('loginUserField').classList.add('invalid'); err.textContent = 'أدخل رقم هاتف صحيح (07XXXXXXXX)'; return; }
     if (!pin) { $('loginPassField').classList.add('invalid'); err.textContent = 'أدخل الرمز السري'; return; }
     const btn = $('loginBtn'); btn.classList.add('loading');
+    await caps.ready();                                  // قبل تحميل قائمة الكباتن لا نحكم على الرمز
     const hash = await HW_sha256('HWK|' + phone + '|' + pin);
     await new Promise(r => setTimeout(r, 300)); btn.classList.remove('loading');
     const c = caps.list().filter(x => x.phone === phone && x.pin === hash)[0];
