@@ -156,7 +156,9 @@ const $ = (id) => document.getElementById(id);
 const H = HWOrders.esc, money = HWOrders.money;
 const ROOTS = ['screen-jobs', 'screen-earn', 'screen-profile'];
 const TAB_OF = { 'screen-jobs': 'jobs', 'screen-job': 'jobs', 'screen-earn': 'earn', 'screen-profile': 'profile' };
-const settingsCol = HWDB.col('settings'); let autoMode = true, actMap = null;
+const settingsCol = HWDB.col('settings'), stState = HWDB.col('storestate');
+/* موقع المتجر: من الطلب، وإن لم يُحفظ فيه (طلبات المطعم) نأخذه من بيانات المتجر التي تحددها الإدارة */
+function sLoc(o) { if (o.storeLoc && o.storeLoc.lat != null) return o.storeLoc; const st = o.storeId && stState.get(o.storeId); return st && st.lat != null ? { lat: st.lat, lng: st.lng } : null; } let autoMode = true, actMap = null;
 let me = null, orders = [], stack = ['screen-jobs'], cur = 'screen-jobs', earnRange = 'today', jobId = null, prevOffers = null, gpsWatch = null, lastGps = 0;
 let seen = {}; try { seen = JSON.parse(localStorage.getItem(SEEN_KEY)) || {}; } catch (e) {}
 const caps = HWDB.col('captains'), issuesCol = HWDB.col('issues');
@@ -214,23 +216,30 @@ function checkAccount() {
 }
 function myDoc() { return me ? caps.get(me.id) || {} : {}; }
 function isOnline() { return !!myDoc().online; }
+let locChecked = false;
+function locDenied() { HWOrders.toast('لا يمكنك الاتصال قبل السماح بالموقع: الإعدادات ← Safari ← الموقع ← السماح'); }
 function setOnline(v) {
     if (!v && active()) { HWOrders.toast('أنهِ طلبك الحالي قبل إنهاء الوردية'); return; }
+    if (v && !locChecked) {   /* لا اتصال بدون إذن الموقع */
+        if (!navigator.geolocation) { HWOrders.toast('جهازك لا يدعم تحديد الموقع'); return; }
+        navigator.geolocation.getCurrentPosition(p => { locChecked = true; myPos = [p.coords.latitude, p.coords.longitude]; myAcc = p.coords.accuracy || 0; updateMeMarker(myPos, myAcc); setOnline(true); },
+            e => { if (e && e.code === 1) locDenied(); else { locChecked = true; setOnline(true); } }, { enableHighAccuracy: true, maximumAge: 30000, timeout: 12000 });
+        return;
+    }
     const start = myDoc().shiftStart;
     caps.patch(me.id, v ? { online: true, lastSeen: Date.now(), shiftStart: Date.now() } : { online: false, shiftStart: 0 }); buzz(15);
     if (v) { HWNotify.unlock(); HWNotify.play('status'); startGps(false); pushLoc(true); } else { HWNotify.stop('offer'); if (start) shiftSheet(start); }
     HWNotify.keepAwake(v); render();
 }
-let shareLoc = true, myPos = null, myAcc = 0;
-try { shareLoc = localStorage.getItem('hwk-share') !== '0'; } catch (e) {}
-function toggleGps() { shareLoc = !shareLoc; try { localStorage.setItem('hwk-share', shareLoc ? '1' : '0'); } catch (e) {} if (shareLoc && myPos) pushLoc(true); renderProfile(); }
+/* مشاركة الموقع مع مركز العمليات إلزامية أثناء الاتصال (لا يستطيع الكابتن إخفاءها) */
+const shareLoc = true; let myPos = null, myAcc = 0;
 /* تتبّع موقع الكابتن: يظهر دائمًا على خريطته، ويُرسل للمنسق فقط وهو متصل */
 function startGps(manual) {
     if (!navigator.geolocation || gpsWatch != null) return;
     gpsWatch = navigator.geolocation.watchPosition(p => {
         myPos = [p.coords.latitude, p.coords.longitude]; myAcc = p.coords.accuracy || 0;
         updateMeMarker(myPos, myAcc); pushLoc(false);
-    }, (e) => { if (e && e.code === 1) { gpsWatch = null; HWOrders.toast('فعّل إذن الموقع ليظهر موقعك على الخريطة'); } else if (manual) HWOrders.toast('تعذر الوصول إلى موقعك'); },
+    }, (e) => { if (e && e.code === 1) { gpsWatch = null; locChecked = false; if (me && isOnline() && !active()) { caps.patch(me.id, { online: false }); render(); } locDenied(); } else if (manual) HWOrders.toast('تعذر الوصول إلى موقعك'); },
     { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 });
 }
 function pushLoc(force) {
@@ -266,7 +275,7 @@ function selfDispatch() {
         if (o.offerTo && HWOrders.offerable(o) && now - (o.offerAt || 0) < lim + 2000) pend[o.offerTo] = o.id;
     });
     if (pend[me.id]) return;
-    const dist = (c, o) => c.lat != null && o.storeLoc ? HWMap.est([c.lat, c.lng], [o.storeLoc.lat, o.storeLoc.lng]) : null;
+    const dist = (c, o) => { const l = sLoc(o); return c.lat != null && l ? HWMap.est([c.lat, c.lng], [l.lat, l.lng]) : null; };
     orders.filter(o => HWOrders.offerable(o)).sort((a, b) => a.createdAt - b.createdAt).some(o => {
         if (o.offerTo && now - (o.offerAt || 0) < lim + 2000) return false;
         let offered = (o.offered || []).slice(); if (o.offerTo && offered.indexOf(o.offerTo) < 0) offered.push(o.offerTo);
@@ -313,7 +322,7 @@ function navTarget(o) {
         if (o.address && o.address.lat) return o.address.lat + ',' + o.address.lng;
         return ((o.address && o.address.details) || '') + ' ' + ((o.address && o.address.area) || o.to || '');
     }
-    if (o.storeLoc) return o.storeLoc.lat + ',' + o.storeLoc.lng;
+    const sl = sLoc(o); if (sl) return sl.lat + ',' + sl.lng;
     return (o.storeName || o.from || '') + ' ' + (o.storeStart === 'umm_naaj' ? 'أم النعاج' : 'السلط');
 }
 function nextStep(o) {
@@ -323,13 +332,14 @@ function nextStep(o) {
 }
 function activeCard(o) {
     const s = HWOrders.settle(o), st = nextStep(o), mk = HWOrders.isMarket(o), toStore = o.status === 'accepted';
-    const phone = toStore ? '' : (o.customer && o.customer.phone) || o.phone || '';
+    const sd = toStore && o.storeId ? HWBiz.storeById(o.storeId) : null;
+    const phone = toStore ? o.storePhone || (sd && sd.phone) || '' : (o.customer && o.customer.phone) || o.phone || '';
     return '<div class="act-card"><small>' + H(o.code) + ' · ' + (toStore ? 'في الطريق للمتجر' : 'في الطريق للعميل') + '</small>' +
         '<h2>' + (toStore ? H(o.storeName || o.from || '') : H((o.customer && o.customer.name) || o.to || 'العميل')) + '</h2>' +
         '<div class="act-info">' +
         (toStore ? (mk ? '<div><span>تدفعه للمتجر نقدًا</span><b>' + money2(s.items) + '</b></div><div><span>حالة المتجر</span><b>' + (o.storeState === 'ready' ? 'جاهز ✓' : 'قيد التحضير') + '</b></div>' : '<div><span>من</span><b>' + H(o.from || '') + '</b></div>')
             : '<div><span>العنوان</span><b>' + H(((o.address && (o.address.label || o.address.area)) || o.to || '') + (o.address && o.address.details ? ' · ' + o.address.details : '')) + '</b></div>' + (mk ? '<div><span>تحصّل من العميل</span><b>' + money2(s.collected) + '</b></div>' : '')) + '</div>' +
-        '<div class="act-btns"><a href="' + HWOrders.openNav(navTarget(o)) + '" target="_blank" rel="noopener">🧭 افتح الخريطة</a>' + (phone ? '<a href="tel:' + H(phone) + '">📞 اتصال</a>' : '') + '<button type="button" onclick="openJob(\'' + o.id + '\')">التفاصيل</button><button type="button" class="prob" onclick="openIssue(\'' + o.id + '\')">مشكلة؟</button></div>' +
+        '<div class="act-btns"><a href="' + HWOrders.openNav(navTarget(o)) + '" target="_blank" rel="noopener">🧭 افتح الخريطة</a>' + (phone ? '<a href="tel:' + H(phone) + '">📞 ' + (toStore ? 'اتصل بالمتجر' : 'اتصال') + '</a>' : '') + '<button type="button" onclick="openJob(\'' + o.id + '\')">التفاصيل</button><button type="button" class="prob" onclick="openIssue(\'' + o.id + '\')">مشكلة؟</button></div>' +
         (st ? '<button type="button" class="submit-btn" style="margin-top:12px" data-step="' + st.k + '" data-id="' + o.id + '"><span class="btn-label">' + st.t + '</span></button>' : '') + '</div>';
 }
 function stepAction(k, id) {
@@ -410,8 +420,8 @@ function annBox() { return HWBiz.announcements('drivers').slice(0, 2).map(a => '
 /* ---------- مناطق الطلب: أين تتركز الطلبات في آخر ٣ ساعات ---------- */
 function heatSpots() {
     const since = Date.now() - 3 * 3600e3, cells = {};
-    orders.filter(o => o.createdAt > since && o.storeLoc).forEach(o => {
-        const k = (Math.round(o.storeLoc.lat * 100) / 100) + ',' + (Math.round(o.storeLoc.lng * 100) / 100);
+    orders.filter(o => o.createdAt > since && sLoc(o)).forEach(o => {
+        const l = sLoc(o), k = (Math.round(l.lat * 100) / 100) + ',' + (Math.round(l.lng * 100) / 100);
         cells[k] = (cells[k] || 0) + 1;
     });
     return Object.keys(cells).map(k => { const p = k.split(',').map(Number); return { p, n: cells[k] }; });
@@ -440,16 +450,19 @@ function recenter() { if (!homeMap) return; followMe = true; mapSig = ''; render
 function renderMapLayers(force) {
     ensureMap(); if (!homeMap) return;
     const a = active(), of = a ? [] : offers();
-    const sig = (a ? 'a' + a.id + a.status : of.map(o => o.id).join(',')) + (heatOn ? '|h' : '');
+    const sig = (a ? 'a' + a.id + a.status + (sLoc(a) ? 'L' : '') : of.map(o => o.id + (sLoc(o) ? 'L' : '')).join(',')) + (heatOn ? '|h' : '');
     if (!force && sig === mapSig) return; mapSig = sig; ordLayer.clearLayers();
     const pts = myPos ? [myPos] : [];
+    const asl = a && sLoc(a);
     if (a && a.address && a.address.lat != null) {
-        const sl = a.storeLoc ? [a.storeLoc.lat, a.storeLoc.lng] : HWMap.center(), dl = [a.address.lat, a.address.lng];
+        const sl = asl ? [asl.lat, asl.lng] : HWMap.center(), dl = [a.address.lat, a.address.lng];
         ordLayer.addLayer(HWMap.line(homeMap, a.route || [sl, dl]));
         L.marker(sl, { icon: HWMap.ICON.store(a.storeId || ''), interactive: false }).addTo(ordLayer);
         L.marker(dl, { icon: HWMap.ICON.home(), interactive: false }).addTo(ordLayer);
         pts.push(sl, dl);
-    } else of.forEach(o => { if (o.storeLoc) { const p = [o.storeLoc.lat, o.storeLoc.lng]; L.marker(p, { icon: HWMap.ICON.store(o.storeId || ''), interactive: false }).addTo(ordLayer); pts.push(p); } });
+    } else if (a && asl) {   /* طلب من المطعم بدون موقع للعميل: نعرض المتجر */
+        const sl = [asl.lat, asl.lng]; L.marker(sl, { icon: HWMap.ICON.store(a.storeId || ''), interactive: false }).addTo(ordLayer); pts.push(sl);
+    } else of.forEach(o => { const ol = sLoc(o); if (ol) { const p = [ol.lat, ol.lng]; L.marker(p, { icon: HWMap.ICON.store(o.storeId || ''), interactive: false }).addTo(ordLayer); pts.push(p); } });
     if (heatOn && !a) heatSpots().forEach(h => L.circle(h.p, { radius: 350 + h.n * 90, stroke: false, fillColor: '#E8EF44', fillOpacity: Math.min(.65, .2 + h.n * .1), interactive: false }).addTo(ordLayer));
     if (sig.replace('|h', '') && pts.length > 1) { followMe = false; HWMap.fit(homeMap, pts, [44, 44]); }
     else if (myPos) homeMap.setView(myPos, 15, { animate: false });
@@ -505,7 +518,7 @@ function settleCard() {
 }
 function countTxt(n) { return n === 1 ? 'طلب واحد' : n === 2 ? 'طلبان' : n + ' طلبات'; }
 function renderProfile() {
-    $('pfGps').textContent = shareLoc ? 'تعمل وأنت متصل' : 'متوقفة';
+    $('pfGps').textContent = 'إلزامية أثناء الاتصال';
     const r = HWBiz.captainRating(me.id, orders);
     $('pfRate').textContent = r.n ? '★ ' + r.avg.toFixed(1) + ' (' + r.n + ')' : 'لا يوجد بعد';
 }
@@ -559,6 +572,7 @@ document.addEventListener('DOMContentLoaded', () => {
     $('loginForm').addEventListener('submit', submitLogin);
     $('enterBtn').addEventListener('click', () => { if (me) finishLogin(); else openLogin(); });
     caps.subscribe(() => { if (me) { checkAccount(); render(); } });
+    stState.subscribe(() => { if (me) render(); }); HWBiz.storesCol.subscribe(() => { if (me) render(); });
     HWBiz.targets.subscribe(() => { if (me) render(); }); HWBiz.announcementsCol.subscribe(() => { if (me) render(); });
     settingsCol.subscribe(l => { const d = l.filter(x => x.id === 'dispatch')[0]; autoMode = !d || d.auto !== false; if (me) render(); });
     HWOrders.subscribe(onOrders);
