@@ -202,6 +202,16 @@ async function submitLogin(ev) {
 function logout() { if (me) caps.patch(me.id, { online: false }); stopGps(); try { localStorage.removeItem(KEY); } catch (e) {} location.reload(); }
 
 /* ---------- الاتصال والموقع ---------- */
+/* حساب محذوف أو موقوف أو تسجيل دخول قديم من نسخة تجريبية: لا يمكن الاتصال، فنخرجه برسالة واضحة */
+let acctChecked = false;
+function checkAccount() {
+    if (!me || !caps.loaded() || acctChecked || !caps.list().length) return;
+    const d = caps.get(me.id);
+    if (d && d.active !== false && (d.name || d.phone)) return;
+    acctChecked = true;
+    HWOrders.toast(d && d.active === false ? 'حسابك موقوف، تواصل مع الإدارة' : 'حسابك غير موجود، سجّل الدخول من جديد');
+    setTimeout(() => { try { localStorage.removeItem(KEY); } catch (e) {} location.reload(); }, 2500);
+}
 function myDoc() { return me ? caps.get(me.id) || {} : {}; }
 function isOnline() { return !!myDoc().online; }
 function setOnline(v) {
@@ -237,16 +247,16 @@ function active() { return mineOrders().filter(o => o.status === 'accepted' || o
 function offers() {
     if (!me || !isOnline()) return [];
     const now = Date.now(), lim = (CFG.offerSeconds || 45) * 1000, dec = myDoc().declined || [];
-    return orders.filter(o => HWOrders.offerable(o) && dec.indexOf(o.id) < 0).filter(o => {
-        if (o.offerTo === me.id) return now - (o.offerAt || 0) < lim;          /* عرض موجّه لي من الإسناد التلقائي */
-        if (o.offerTo || !autoMode) return false;                              /* موجّه لغيري، أو الوضع يدوي */
-        return now - (o.createdAt || 0) > 90000 && (o.offered || []).indexOf(me.id) < 0;   /* احتياط: لم يتصرف المنسق فيعرض للجميع */
+    return orders.filter(o => HWOrders.offerable(o)).filter(o => {
+        if (o.offerTo === me.id) return now - (o.offerAt || 0) < lim;          /* عرض موجّه لي (حتى لو رفضته في دورة سابقة) */
+        if (o.offerTo || !autoMode || dec.indexOf(o.id) >= 0) return false;    /* موجّه لغيري، أو الوضع يدوي، أو رفضته */
+        return now - (o.createdAt || 0) > 90000 && (o.offered || []).indexOf(me.id) < 0;   /* احتياط: لم يتصرف أحد فيعرض للجميع */
     });
 }
 /* الإسناد التلقائي من جهة الكابتن أيضًا: إن لم تكن لوحة المنسقين مفتوحة، يحسب كل تطبيق
    ترتيب الكباتن المتاحين بنفس قاعدة اللوحة (الأقرب للمتجر ثم الأقدم انتظارًا)، ويأخذ العرض إن كان هو الأول */
 /* متاح: متصل وظاهر حديثًا، أو مفعّل الإشعارات (تصله العروض والتطبيق مغلق) خلال 12 ساعة */
-function capLive(c) { const age = Date.now() - (c.lastSeen || 0); return c.active !== false && c.online && (!c.lastSeen || age < 120000 || (c.pushOn && age < 12 * 3600e3)); }
+function capLive(c) { const age = Date.now() - (c.lastSeen || 0), push = !!(CFG.push && CFG.push.server && c.pushOn); return c.active !== false && c.online && (!c.lastSeen || age < 120000 || (push && age < 12 * 3600e3)); }
 function selfDispatch() {
     if (!me || !autoMode || !isOnline() || active()) return;
     const now = Date.now(), lim = (CFG.offerSeconds || 45) * 1000, all = caps.list();
@@ -259,8 +269,13 @@ function selfDispatch() {
     const dist = (c, o) => c.lat != null && o.storeLoc ? HWMap.est([c.lat, c.lng], [o.storeLoc.lat, o.storeLoc.lng]) : null;
     orders.filter(o => HWOrders.offerable(o)).sort((a, b) => a.createdAt - b.createdAt).some(o => {
         if (o.offerTo && now - (o.offerAt || 0) < lim + 2000) return false;
-        const offered = (o.offered || []).slice(); if (o.offerTo && offered.indexOf(o.offerTo) < 0) offered.push(o.offerTo);
-        const cands = all.filter(c => capLive(c) && !busy[c.id] && !pend[c.id] && offered.indexOf(c.id) < 0).sort((a, b) => {
+        let offered = (o.offered || []).slice(); if (o.offerTo && offered.indexOf(o.offerTo) < 0) offered.push(o.offerTo);
+        const free = all.filter(c => capLive(c) && !busy[c.id] && !pend[c.id]);
+        if (free.length && free.every(c => offered.indexOf(c.id) >= 0)) {           /* عُرض على الجميع: دورة جديدة (مثل لوحة الإدارة) */
+            if (o.declinedAt && now - o.declinedAt < 30000) return false;              /* رُفض للتو: مهلة قصيرة قبل إعادة العرض */
+            offered = [];
+        }
+        const cands = free.filter(c => offered.indexOf(c.id) < 0).sort((a, b) => {
             const da = dist(a, o), db = dist(b, o);
             if (da != null && db != null) return da - db; if (da != null) return -1; if (db != null) return 1; return (a.lastSeen || 0) - (b.lastSeen || 0);
         });
@@ -278,7 +293,7 @@ async function takeOffer(id) {
     const ok = await HWOrders.claim(id, { id: me.id, name: me.name, phone: me.phone });
     if (ok) { HWOrders.toast('✓ الطلب لك، توجه للمتجر'); jobId = id; render(); } else { HWOrders.toast('سبقك كابتن آخر لهذا الطلب'); render(); }
 }
-function declineOffer(id) { const o = HWOrders.get(id); if (o && o.offerTo === me.id) HWOrders.update(id, { offerTo: null, offerAt: 0, offered: (o.offered || []).concat([me.id]) }); const d = (myDoc().declined || []).concat([id]).slice(-50); caps.patch(me.id, { declined: d }); buzz(); }
+function declineOffer(id) { const o = HWOrders.get(id); if (o && o.offerTo === me.id) HWOrders.update(id, { offerTo: null, offerAt: 0, declinedAt: Date.now(), offered: (o.offered || []).concat([me.id]) }); const d = (myDoc().declined || []).concat([id]).slice(-50); caps.patch(me.id, { declined: d }); buzz(); }
 function earnOf(o) { const s = HWOrders.settle(o); return s.net; }
 
 function offerCard(o) {
@@ -543,7 +558,7 @@ document.addEventListener('DOMContentLoaded', () => {
     introCtl = skip ? null : initIntroVideo();
     $('loginForm').addEventListener('submit', submitLogin);
     $('enterBtn').addEventListener('click', () => { if (me) finishLogin(); else openLogin(); });
-    caps.subscribe(() => { if (me) render(); });
+    caps.subscribe(() => { if (me) { checkAccount(); render(); } });
     HWBiz.targets.subscribe(() => { if (me) render(); }); HWBiz.announcementsCol.subscribe(() => { if (me) render(); });
     settingsCol.subscribe(l => { const d = l.filter(x => x.id === 'dispatch')[0]; autoMode = !d || d.auto !== false; if (me) render(); });
     HWOrders.subscribe(onOrders);
